@@ -1,0 +1,1 @@
+trace = { SOI ~ EOI }
