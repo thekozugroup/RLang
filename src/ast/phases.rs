@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::common::Span;
+use super::common::{Span, Statement};
 
 /// The top-level AST node: a complete reasoning trace
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10,12 +10,12 @@ pub struct Trace {
 }
 
 /// Which reasoning phase this block represents
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Phase {
-    Frame,
-    Explore,
-    Verify,
-    Decide,
+    Frame   = 0,
+    Explore = 1,
+    Verify  = 2,
+    Decide  = 3,
 }
 
 /// A phase block: #[phase(X)] { statements... }
@@ -23,7 +23,7 @@ pub enum Phase {
 pub struct PhaseBlock {
     pub phase: Phase,
     pub impl_mode: Option<ReasoningMode>,
-    pub statements: Vec<super::common::Ident>, // Placeholder — will be Statement enum
+    pub statements: Vec<Statement>,
     pub span: Option<Span>,
 }
 
