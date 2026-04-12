@@ -58,6 +58,9 @@ OPERATOR_PATTERNS = [
     # Observation
     (re.compile(r"(?:I\s+notice|I\s+see|I\s+observe|looking\s+at|given\s+that)\s+(.+?)(?:\.|,|$)", re.I),
      "obs", 1),
+    # "assume", "suppose", "given" -> obs() with ep:direct
+    (re.compile(r"(?:assum(?:e|ing)|suppos(?:e|ing)|given)\s+(?:that\s+)?(.+?)(?:\.|,|$)", re.I),
+     "obs", 1),
 
     # Similarity / analogy
     (re.compile(r"(?:similar\s+to|like|analogous\s+to|reminds?\s+me\s+of)\s+(.+?)(?:\.|,|$)", re.I),
@@ -90,6 +93,48 @@ OPERATOR_PATTERNS = [
     # Goal
     (re.compile(r"(?:goal\s+is|want\s+to|need\s+to\s+achieve|objective\s+is)\s+(.+?)(?:\.|,|$)", re.I),
      "goal", 2),
+
+    # --- New patterns for improved concept coverage (Fix 3) ---
+
+    # "if...then" -> enbl() (condition enables conclusion)
+    (re.compile(r"if\s+(.+?)\s*,?\s+then\s+(.+?)(?:\.|,|$)", re.I),
+     "enbl", 2),
+
+    # "therefore", "so", "thus", "hence" -> cause() connecting reasoning to conclusion
+    (re.compile(r"(?:therefore|thus|hence|consequently|as\s+a\s+result)\s*,?\s*(.+?)(?:\.|,|$)", re.I),
+     "cause", 2),
+    (re.compile(r"^so\s+(?!that\b)(.+?)(?:\.|,|$)", re.I),
+     "cause", 2),
+
+    # "first...second...third" -> seq() chains
+    (re.compile(r"(?:first(?:ly)?|second(?:ly)?|third(?:ly)?|finally|lastly)\s*,?\s*(.+?)(?:\.|,|$)", re.I),
+     "seq", 2),
+
+    # "the problem is", "the issue is" -> obs() with the problem as argument
+    (re.compile(r"(?:the\s+(?:problem|issue|difficulty|challenge)\s+is)\s+(?:that\s+)?(.+?)(?:\.|,|$)", re.I),
+     "obs", 1),
+
+    # "we can", "the solution is", "approach" -> goal() or dcmp()
+    (re.compile(r"(?:we\s+can|the\s+(?:solution|approach|strategy|answer)\s+is)\s+(?:to\s+)?(.+?)(?:\.|,|$)", re.I),
+     "goal", 2),
+    (re.compile(r"(?:break(?:ing)?\s+(?:this|it)\s+(?:down|into)|decompos(?:e|ing)|split(?:ting)?\s+into)\s+(.+?)(?:\.|,|$)", re.I),
+     "dcmp", 2),
+
+    # "verify", "check", "confirm", "test" -> req() for Verify phase
+    (re.compile(r"(?:verify(?:ing)?|check(?:ing)?|confirm(?:ing)?|test(?:ing)?|validat(?:e|ing))\s+(?:that\s+)?(.+?)(?:\.|,|$)", re.I),
+     "req", 2),
+
+    # "means that", "implies that", "indicates that" -> cause()
+    (re.compile(r"(?:means?\s+that|implies?\s+that|indicates?\s+that|shows?\s+that)\s+(.+?)(?:\.|,|$)", re.I),
+     "cause", 2),
+
+    # "in order to", "so that" -> enbl()
+    (re.compile(r"(?:in\s+order\s+to|so\s+that)\s+(.+?)(?:\.|,|$)", re.I),
+     "enbl", 2),
+
+    # "equal to", "equals", numerical comparison -> obs()
+    (re.compile(r"(\w[\w\s]*?)\s+(?:equals?|is\s+equal\s+to|=)\s+(.+?)(?:\.|,|$)", re.I),
+     "obs", 1),
 ]
 
 # Confidence mapping from English hedging language
@@ -317,7 +362,8 @@ def is_filler_sentence(sentence: str) -> bool:
         r"^(?:let\s+me|okay|alright|so\s+basically|well|hmm|um|uh)",
         r"^(?:I\s+(?:need\s+to|want\s+to|will|should)\s+(?:think|consider|look|check|start))",
         r"^(?:let'?s?\s+(?:see|think|start|begin|look|consider))",
-        r"^(?:now|first|second|third|next|finally|lastly)",
+        r"^(?:now)\s*[,.]",
+        # Note: "first/second/third" are no longer filler -- they map to seq()
         r"^(?:in\s+(?:conclusion|summary|other\s+words))",
         r"^(?:as\s+(?:I|we)\s+(?:mentioned|said|noted|discussed))",
         r"(?:step\s+by\s+step|one\s+by\s+one|working\s+through)",
@@ -468,7 +514,47 @@ def detect_ep_mode(sentence: str) -> str:
         return "anl"
     if EP_INFER_PATTERNS.search(sentence):
         return "infer"
+    # Check if another agent/source is mentioned (ep:recv)
+    if re.search(
+        r"\b(?:according\s+to|(?:he|she|they|someone|the\s+(?:author|user|client|teacher|expert))"
+        r"\s+(?:said|told|mentioned|stated|reported|claimed|wrote|noted))\b",
+        sentence, re.I
+    ):
+        return "recv"
     return "infer"
+
+
+def ep_mode_for_operator(operator: str, sentence_ep: str) -> str:
+    """Return the correct EP mode based on operator type and sentence context.
+
+    Rules (from QAQC spec):
+      - obs()        -> ep:direct
+      - cause/prvnt/enbl/req -> ep:infer
+      - sim()        -> ep:anl
+      - If sentence mentions another agent/source -> ep:recv (overrides)
+    Falls back to sentence_ep if the operator doesn't have a strong default.
+    """
+    # recv always wins if the sentence detected it
+    if sentence_ep == "recv":
+        return "recv"
+
+    OPERATOR_EP_DEFAULTS = {
+        "obs": "direct",
+        "cause": "infer",
+        "prvnt": "infer",
+        "enbl": "infer",
+        "req": "infer",
+        "sim": "anl",
+        "confl": "infer",
+        "cncl": "infer",
+        "cntns": "infer",
+        "isa": "infer",
+        "seq": "infer",
+        "chng": "infer",
+        "goal": "infer",
+        "dcmp": "infer",
+    }
+    return OPERATOR_EP_DEFAULTS.get(operator, sentence_ep if sentence_ep else "infer")
 
 
 def strip_waste(text: str) -> str:
@@ -490,6 +576,9 @@ def extract_statements(text: str, domain: str = "general") -> list[ExtractedStat
     """
     statements = []
     sentences = SENTENCE_SPLIT.split(text)
+    unmatched_sentences = []  # Track unmatched for second pass
+    sentences_with_content = []  # All non-filler sentences
+    matched_in_fallback = 0
 
     for sentence in sentences:
         sentence = sentence.strip()
@@ -500,6 +589,7 @@ def extract_statements(text: str, domain: str = "general") -> list[ExtractedStat
         if is_filler_sentence(sentence):
             continue
 
+        sentences_with_content.append(sentence)
         conf = detect_confidence(sentence)
         ep = detect_ep_mode(sentence)
 
@@ -536,7 +626,7 @@ def extract_statements(text: str, domain: str = "general") -> list[ExtractedStat
                     operator=op_name,
                     args=args,
                     confidence=conf,
-                    ep_mode=ep,
+                    ep_mode=ep_mode_for_operator(op_name, ep),
                     source_sentence=sentence,
                 )
                 statements.append(stmt)
@@ -545,6 +635,7 @@ def extract_statements(text: str, domain: str = "general") -> list[ExtractedStat
 
         # If no operator matched, capture factual or conclusive statements
         if not matched:
+            unmatched_sentences.append((sentence, conf, ep))
             # Try to extract a meaningful noun from the sentence
             noun = extract_first_noun(sentence)
             ident = noun if noun else sanitize_identifier(sentence, domain)
@@ -554,9 +645,10 @@ def extract_statements(text: str, domain: str = "general") -> list[ExtractedStat
                         operator="obs",
                         args=[ident],
                         confidence=conf,
-                        ep_mode="direct",
+                        ep_mode=ep_mode_for_operator("obs", ep),
                         source_sentence=sentence,
                     ))
+                    matched_in_fallback += 1
                 elif conf >= 0.80 or ep == "infer":
                     # Use domain-specific second arg instead of duplicate
                     names = DOMAIN_VAR_NAMES.get(domain, DOMAIN_VAR_NAMES["general"])
@@ -565,9 +657,48 @@ def extract_statements(text: str, domain: str = "general") -> list[ExtractedStat
                         operator="cause",
                         args=[ident, second],
                         confidence=conf,
-                        ep_mode=ep,
+                        ep_mode=ep_mode_for_operator("cause", ep),
                         source_sentence=sentence,
                     ))
+                    matched_in_fallback += 1
+
+    # Second pass: if coverage is < 30%, try harder on unmatched sentences
+    total_reasoning = len(sentences_with_content)
+    mapped_count = len(statements)
+    coverage = mapped_count / max(total_reasoning, 1)
+
+    if coverage < 0.30 and unmatched_sentences:
+        for sentence, conf, ep in unmatched_sentences:
+            # Check if already captured in fallback
+            already = any(s.source_sentence == sentence for s in statements)
+            if already:
+                continue
+
+            noun = extract_first_noun(sentence)
+            ident = noun if noun else sanitize_identifier(sentence, domain)
+            if not ident or ident == "x" or len(ident) < 2:
+                continue
+
+            # Numbers and calculations -> obs()
+            if re.search(r'\d+(?:\.\d+)?(?:\s*[\+\-\*/=]\s*\d+)', sentence):
+                statements.append(ExtractedStatement(
+                    operator="obs", args=[ident],
+                    confidence=conf,
+                    ep_mode=ep_mode_for_operator("obs", "direct"),
+                    source_sentence=sentence,
+                ))
+                continue
+
+            # Any remaining sentence with reasoning content -> obs()
+            # (lower the bar: accept sentences with 5+ words that aren't pure filler)
+            word_count = len(sentence.split())
+            if word_count >= 5:
+                statements.append(ExtractedStatement(
+                    operator="obs", args=[ident],
+                    confidence=conf,
+                    ep_mode=ep_mode_for_operator("obs", ep),
+                    source_sentence=sentence,
+                ))
 
     return statements
 
@@ -597,7 +728,7 @@ def assign_phases(
     explore_end = max(frame_end + 1, int(n * 0.75))
     verify_end = max(explore_end + 1, int(n * 0.90))
 
-    frame_ops = {"obs", "req", "goal", "isa", "cntns"}
+    frame_ops = {"obs", "req", "goal", "isa", "cntns", "dcmp"}
     explore_ops = {"cause", "prvnt", "enbl", "sim", "confl", "seq", "chng", "cncl"}
 
     for i, stmt in enumerate(statements):
@@ -671,7 +802,8 @@ def assign_phases(
         trace.explore_statements.append(ExtractedStatement(
             operator="cause",
             args=[trace.primary_belief, "ev"],
-            confidence=DEFAULT_CONFIDENCE, ep_mode="infer",
+            confidence=DEFAULT_CONFIDENCE,
+            ep_mode=ep_mode_for_operator("cause", "infer"),
             source_sentence="",
         ))
     if not trace.verify_statements:
@@ -679,7 +811,8 @@ def assign_phases(
         trace.verify_statements.append(ExtractedStatement(
             operator="req",
             args=[trace.primary_belief, "obs(" + first_obs + ")"],
-            confidence=0.90, ep_mode="infer",
+            confidence=0.90,
+            ep_mode=ep_mode_for_operator("req", "infer"),
         ))
 
     return trace
@@ -835,6 +968,72 @@ def generate_decide_block(trace: RLangTrace, confidence_tier: str = "moderate") 
     return "\n".join(lines)
 
 
+def generate_minimal_trace(trace: RLangTrace, confidence_tier: str) -> str:
+    """Generate a minimal RLang trace for short English inputs.
+
+    Uses only 2 observations in Frame, 1 evidence item, minimal Verify,
+    and a simple Decide. This keeps RLang shorter than the English.
+    """
+    lines = []
+
+    # Minimal Frame: max 2 obs
+    lines.append(f"#[phase(Frame)]")
+    lines.append(f"impl {trace.reasoning_mode} {{")
+    obs_stmts = [s for s in trace.frame_statements if s.operator == "obs"][:2]
+    if not obs_stmts:
+        obs_stmts = [trace.frame_statements[0]] if trace.frame_statements else []
+    for stmt in obs_stmts:
+        name = stmt.args[0] if stmt.args else "fact"
+        conf = f"{stmt.confidence:.2f}"
+        lines.append(
+            f"    let {name}: blf<{conf}> = obs({name})"
+            f" | p:{conf} | ep:{stmt.ep_mode} | scope:loc | t:fresh;"
+        )
+    lines.append("}")
+
+    # Minimal Explore: 1 evidence item
+    belief = trace.primary_belief
+    lines.append("")
+    lines.append("#[phase(Explore)]")
+    lines.append("{")
+    if trace.explore_statements:
+        stmt = trace.explore_statements[0]
+        delta_val = compute_evidence_delta(stmt.source_sentence, stmt.operator)
+        source_name = stmt.args[0] if stmt.args else "ev"
+        if stmt.operator in ("prvnt", "confl", "cncl"):
+            d = -abs(delta_val)
+            lines.append(f"    let ev = [{source_name} => wkn({belief}, {d:+.2f}),];")
+        else:
+            d = abs(delta_val)
+            lines.append(f"    let ev = [{source_name} => sup({belief}, {d:+.2f}),];")
+    else:
+        lines.append(f"    let ev = [];")
+    lines.append(f"    {belief} |> resolve(ev) -> Ok(rslv);")
+    lines.append("}")
+
+    # Minimal Verify
+    lines.append("")
+    lines.append("#[phase(Verify)]")
+    lines.append("{")
+    first_obs = obs_stmts[0].args[0] if obs_stmts and obs_stmts[0].args else "input"
+    lines.append(f"    req({belief}, obs({first_obs})) |> verify({belief}) -> Ok(());")
+    lines.append("}")
+
+    # Simple Decide
+    lines.append("")
+    lines.append("#[phase(Decide)]")
+    lines.append("{")
+    high, mid, _low = get_decision_thresholds(confidence_tier)
+    lines.append(f"    match conf({belief}) {{")
+    lines.append(f"        c if c > {high:.2f} => assert({belief}),")
+    lines.append(f"        c if c > {mid:.2f} => hedge({belief}),")
+    lines.append(f"        _ => reject({belief}),")
+    lines.append("    }")
+    lines.append("}")
+
+    return "\n".join(lines)
+
+
 def convert_trace(english_text: str) -> tuple[str, bool]:
     """Convert a single English reasoning trace to RLang.
 
@@ -866,7 +1065,8 @@ def convert_trace(english_text: str) -> tuple[str, bool]:
                 statements.append(ExtractedStatement(
                     operator="obs", args=[ident],
                     confidence=detect_confidence(s),
-                    ep_mode=detect_ep_mode(s), source_sentence=s,
+                    ep_mode=ep_mode_for_operator("obs", detect_ep_mode(s)),
+                    source_sentence=s,
                 ))
         if not statements:
             return "", False
@@ -886,6 +1086,38 @@ def convert_trace(english_text: str) -> tuple[str, bool]:
     ]
 
     rlang_text = "\n".join(parts)
+
+    # Step 5: Check compression ratio -- filter uncompressible traces
+    # Use character-based ratio to match QAQC's measurement method
+    rlang_stripped = re.sub(r'//[^\n]*', '', rlang_text).strip()
+    english_len = len(english_text)
+    rlang_len = len(rlang_stripped)
+
+    if rlang_len > 0 and english_len > 0:
+        ratio = english_len / rlang_len
+        if ratio < 1.0:
+            # RLang is LONGER than English -- try minimal, else skip
+            english_tokens_est = estimate_tokens(english_text)
+            if english_tokens_est < 150:
+                return "", False
+            minimal = generate_minimal_trace(trace, confidence_tier)
+            minimal_stripped = re.sub(r'//[^\n]*', '', minimal).strip()
+            minimal_ratio = english_len / max(len(minimal_stripped), 1)
+            if minimal_ratio < 1.0:
+                return "", False
+            return minimal, True
+        elif ratio < 1.5:
+            # Low compression -- use minimal template for better ratio
+            minimal = generate_minimal_trace(trace, confidence_tier)
+            minimal_stripped = re.sub(r'//[^\n]*', '', minimal).strip()
+            minimal_ratio = english_len / max(len(minimal_stripped), 1)
+            if minimal_ratio >= 1.5:
+                return minimal, True
+            elif minimal_ratio >= 1.0:
+                return minimal, True
+            # If minimal is still bad, skip
+            return "", False
+
     return rlang_text, True
 
 

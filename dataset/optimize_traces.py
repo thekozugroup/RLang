@@ -209,24 +209,28 @@ def optimize_collapse_verify(text: str) -> tuple[str, int]:
 # If ep:direct is the default for obs() calls, we can omit it
 
 def optimize_remove_redundant_metadata(text: str) -> tuple[str, int]:
-    """Remove ep:direct metadata when it follows an obs() call (it's implied).
+    """Remove truly redundant metadata (scope:loc, t:fresh) but PRESERVE ep:.
+
+    QAQC requires ep: on every blf<> binding, so we must never strip it.
+    Only strip scope:loc (always local) and t:fresh (always fresh) which
+    are genuinely redundant defaults.
 
     Returns (optimized_text, count_of_removals).
     """
-    # Pattern: obs(...) | ... | ep:direct
-    # Remove the | ep:direct portion when obs() is the source
-    pattern = re.compile(
-        r'(obs\([^)]*\)\s*(?:\|[^|;]*)*?)\s*\|\s*ep:direct',
-    )
-
     result = text
     count = 0
-    while True:
-        new_result, n = pattern.subn(r'\1', result)
-        if n == 0:
-            break
-        count += n
-        result = new_result
+
+    # Remove | scope:loc (always implied for local bindings)
+    scope_pattern = re.compile(r'\s*\|\s*scope:loc')
+    new_result, n = scope_pattern.subn('', result)
+    count += n
+    result = new_result
+
+    # Remove | t:fresh (always implied for new beliefs)
+    fresh_pattern = re.compile(r'\s*\|\s*t:fresh')
+    new_result, n = fresh_pattern.subn('', result)
+    count += n
+    result = new_result
 
     return result, count
 
@@ -397,12 +401,35 @@ def main():
             optimized_traces.append(trace)
 
     # -----------------------------------------------------------------------
+    # Post-optimization compression filter
+    # Drop traces where RLang >= English (character-based ratio < 1.0)
+    # -----------------------------------------------------------------------
+    filtered_traces = []
+    dropped_compression = 0
+    for trace in optimized_traces:
+        english_text = trace.get("thinking_english", "")
+        rlang_text = trace.get("thinking_rlang", "")
+        if english_text and rlang_text:
+            rlang_stripped = re.sub(r'//[^\n]*', '', rlang_text).strip()
+            char_ratio = len(english_text) / max(len(rlang_stripped), 1)
+            if char_ratio < 1.0:
+                dropped_compression += 1
+                continue
+            # Update stored metrics
+            trace["rlang_tokens_est"] = estimate_tokens(rlang_text)
+            trace["compression_ratio"] = round(char_ratio, 2)
+        filtered_traces.append(trace)
+
+    if dropped_compression > 0:
+        print(f"\n  Dropped {dropped_compression} traces with RLang >= English (compression < 1.0)")
+
+    # -----------------------------------------------------------------------
     # Write output
     # -----------------------------------------------------------------------
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
     with open(OUTPUT_PATH, "w") as f:
-        for trace in optimized_traces:
+        for trace in filtered_traces:
             f.write(json.dumps(trace, ensure_ascii=False) + "\n")
     print(f"\nOptimized traces written to: {OUTPUT_PATH}")
 
@@ -418,6 +445,8 @@ def main():
     print("  OPTIMIZATION REPORT")
     print("=" * 60)
     print(f"  Total traces:            {total}")
+    print(f"  Output traces:           {len(filtered_traces)}")
+    print(f"  Dropped (compression):   {dropped_compression}")
     print(f"  Failed re-validation:    {failed_revalidation}")
     print()
     print(f"  Tokens before:           {total_tokens_before:,}")
