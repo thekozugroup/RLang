@@ -27,4 +27,6 @@ pub enum ValidationError {
     Resource { message: String },
     #[error("type error: {message}")]
     Type { message: String },
+    #[error("semantic error: {message}")]
+    Semantic { message: String },
 }

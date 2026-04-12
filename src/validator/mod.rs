@@ -18,7 +18,21 @@ pub fn validate(trace: &Trace) -> Result<(), Vec<ValidationError>> {
         all_errors.extend(errors);
     }
 
-    // Future: bounds, resources, types validators
+    if let Err(errors) = bounds::validate_bounds(trace) {
+        all_errors.extend(errors);
+    }
+
+    if let Err(errors) = resources::validate_resources(trace) {
+        all_errors.extend(errors);
+    }
+
+    if let Err(errors) = types::validate_types(trace) {
+        all_errors.extend(errors);
+    }
+
+    if let Err(errors) = crate::semantic::validate_semantics(trace) {
+        all_errors.extend(errors);
+    }
 
     if all_errors.is_empty() {
         Ok(())
