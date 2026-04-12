@@ -1,4 +1,4 @@
-"""Download and standardize Opus 4.6 Reasoning + Harmonic Reasoning datasets."""
+"""Download and standardize Opus 4.6 Reasoning + Harmonic Reasoning + Hermes Agent Traces datasets."""
 
 import json
 import os
@@ -40,6 +40,17 @@ DOMAIN_MAP = {
     "puzzle": "reasoning",
     "riddle": "reasoning",
     "critical_thinking": "reasoning",
+    # Hermes agent trace categories
+    "agentic": "agentic",
+    "agent_tools": "agentic",
+    "terminal_&_coding": "code",
+    "web_&_search": "agentic",
+    "file_&_document": "agentic",
+    "data_&_analysis": "code",
+    "system_&_config": "code",
+    "communication": "agentic",
+    "creative_&_design": "reasoning",
+    "knowledge_&_research": "reasoning",
 }
 
 # Difficulty normalization
@@ -141,6 +152,114 @@ def process_harmonic(ds) -> list[dict]:
     return records
 
 
+def process_hermes(ds) -> list[dict]:
+    """Process Hermes Agent Traces dataset into standardized format.
+
+    This is a multi-turn agentic dataset with tool calls.
+    - conversations: ShareGPT array of {from, value} with roles: system, human, gpt, tool
+    - Reasoning in gpt messages inside <think>...</think> tags
+    - Tool calls as <tool_call> JSON blocks
+    - Tool results as <tool_response> from "tool" messages
+    """
+    import re as _re
+
+    think_pattern = _re.compile(r"<think>(.*?)</think>", _re.DOTALL)
+
+    # Category mapping for Hermes
+    HERMES_CATEGORY_MAP = {
+        "Agent Tools": "agentic",
+        "Terminal & Coding": "code",
+        "Web & Search": "agentic",
+        "File & Document": "agentic",
+        "Data & Analysis": "code",
+        "System & Config": "code",
+        "Communication": "agentic",
+        "Creative & Design": "reasoning",
+        "Knowledge & Research": "reasoning",
+    }
+
+    records = []
+    for i, row in enumerate(tqdm(ds, desc="Processing Hermes Agent Traces")):
+        conversations = row.get("conversations", [])
+        if isinstance(conversations, str):
+            try:
+                conversations = json.loads(conversations)
+            except (json.JSONDecodeError, TypeError):
+                conversations = []
+
+        # Count messages for difficulty assignment
+        msg_count = len(conversations)
+
+        # Extract ALL <think> blocks from all gpt messages
+        think_blocks = []
+        gpt_messages = []
+        for msg in conversations:
+            if msg.get("from") == "gpt":
+                value = msg.get("value", "")
+                gpt_messages.append(value)
+                thinks = think_pattern.findall(value)
+                think_blocks.extend(thinks)
+
+        thinking_english = "\n\n".join(block.strip() for block in think_blocks if block.strip())
+
+        # Extract final gpt message's non-think content as solution
+        solution = ""
+        if gpt_messages:
+            last_gpt = gpt_messages[-1]
+            # Remove think blocks from the final message
+            solution = think_pattern.sub("", last_gpt).strip()
+
+        # Use the task field as problem
+        problem = row.get("task", "")
+
+        # Map category to domain
+        category = row.get("category", "")
+        domain = HERMES_CATEGORY_MAP.get(category, "agentic")
+
+        # Map difficulty based on conversation length
+        if msg_count < 10:
+            difficulty = "easy"
+        elif msg_count <= 30:
+            difficulty = "medium"
+        else:
+            difficulty = "hard"
+
+        # Count tool calls for metadata
+        tool_call_count = 0
+        tool_response_count = 0
+        for msg in conversations:
+            if msg.get("from") == "gpt":
+                value = msg.get("value", "")
+                tool_call_count += value.count("<tool_call>")
+            elif msg.get("from") == "tool":
+                tool_response_count += 1
+
+        record = {
+            "id": f"hermes_{row.get('id', i)}",
+            "source": "hermes-agent-traces",
+            "problem": problem,
+            "thinking_english": thinking_english,
+            "solution": solution,
+            "domain": domain,
+            "category": category,
+            "difficulty": difficulty,
+            "thinking_tokens_est": estimate_tokens(thinking_english),
+            "metadata": json.dumps({
+                "original_category": category,
+                "subcategory": row.get("subcategory", ""),
+                "msg_count": msg_count,
+                "tool_call_count": tool_call_count,
+                "tool_response_count": tool_response_count,
+                "is_agentic": True,
+                "has_tool_calls": tool_call_count > 0,
+                "conversations_raw": json.dumps(conversations),
+                "tools": row.get("tools", ""),
+            }),
+        }
+        records.append(record)
+    return records
+
+
 def print_summary(df: pd.DataFrame, name: str) -> None:
     """Print summary statistics for a dataframe."""
     print(f"\n{'=' * 60}")
@@ -171,18 +290,25 @@ def main():
     harmonic_ds = load_dataset("DJLougen/harmonic-reasoning-v1", split="train")
     print(f"  Downloaded {len(harmonic_ds)} rows")
 
+    print("\nDownloading Hermes Agent Traces dataset...")
+    hermes_ds = load_dataset("DJLougen/hermes-agent-traces-filtered", split="train")
+    print(f"  Downloaded {len(hermes_ds)} rows")
+
     # Process into standardized format
     opus_records = process_opus(opus_ds)
     harmonic_records = process_harmonic(harmonic_ds)
+    hermes_records = process_hermes(hermes_ds)
 
     # Create DataFrames
     opus_df = pd.DataFrame(opus_records)
     harmonic_df = pd.DataFrame(harmonic_records)
-    combined_df = pd.concat([opus_df, harmonic_df], ignore_index=True)
+    hermes_df = pd.DataFrame(hermes_records)
+    combined_df = pd.concat([opus_df, harmonic_df, hermes_df], ignore_index=True)
 
     # Save parquet files
     opus_path = DATA_DIR / "opus_standardized.parquet"
     harmonic_path = DATA_DIR / "harmonic_standardized.parquet"
+    hermes_path = DATA_DIR / "hermes_standardized.parquet"
     combined_path = DATA_DIR / "standardized.parquet"
 
     opus_df.to_parquet(opus_path, index=False)
@@ -191,12 +317,16 @@ def main():
     harmonic_df.to_parquet(harmonic_path, index=False)
     print(f"Saved: {harmonic_path} ({len(harmonic_df)} rows)")
 
+    hermes_df.to_parquet(hermes_path, index=False)
+    print(f"Saved: {hermes_path} ({len(hermes_df)} rows)")
+
     combined_df.to_parquet(combined_path, index=False)
     print(f"Saved: {combined_path} ({len(combined_df)} rows)")
 
     # Print summaries
     print_summary(opus_df, "Opus 4.6 Reasoning")
     print_summary(harmonic_df, "Harmonic Reasoning v1")
+    print_summary(hermes_df, "Hermes Agent Traces")
     print_summary(combined_df, "Combined Dataset")
 
 

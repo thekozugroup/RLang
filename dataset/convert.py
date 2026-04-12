@@ -1156,18 +1156,340 @@ def validate_rlang(rlang_text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Agentic trace conversion (Hermes multi-turn tool-use traces)
+# ---------------------------------------------------------------------------
+
+def _parse_tool_calls(text: str) -> list[dict]:
+    """Extract <tool_call> JSON blocks from a gpt message."""
+    calls = []
+    for m in re.finditer(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", text, re.DOTALL):
+        try:
+            obj = json.loads(m.group(1))
+            calls.append(obj)
+        except json.JSONDecodeError:
+            pass
+    return calls
+
+
+def _parse_tool_responses(text: str) -> list[str]:
+    """Extract <tool_response> content from tool messages."""
+    results = []
+    for m in re.finditer(r"<tool_response>\s*(.*?)\s*</tool_response>", text, re.DOTALL):
+        results.append(m.group(1).strip())
+    # Also handle bare tool message content (no wrapper tags)
+    if not results and text.strip():
+        results.append(text.strip())
+    return results
+
+
+def _sanitize_tool_name(name: str) -> str:
+    """Sanitize a tool/function name for use as an RLang identifier."""
+    # Keep only alphanumeric and underscore
+    clean = re.sub(r"[^a-zA-Z0-9_]", "_", name)
+    # Collapse multiple underscores
+    clean = re.sub(r"_+", "_", clean).strip("_")
+    return clean[:30] if clean else "tool"
+
+
+def _summarize_args(args: dict, max_keys: int = 3) -> str:
+    """Summarize tool arguments for compact representation."""
+    if not args:
+        return ""
+    keys = list(args.keys())[:max_keys]
+    parts = []
+    for k in keys:
+        v = args[k]
+        if isinstance(v, str) and len(v) > 40:
+            v = v[:37] + "..."
+        parts.append(f"{k}={v!r}" if not isinstance(v, str) else f"{k}=\"{v}\"")
+    suffix = ", ..." if len(args) > max_keys else ""
+    return ", ".join(parts) + suffix
+
+
+def _summarize_tool_response(text: str, max_len: int = 80) -> str:
+    """Summarize a tool response for obs()."""
+    if not text:
+        return "empty_response"
+    # Try to extract a meaningful identifier
+    clean = re.sub(r"\s+", " ", text).strip()
+    if len(clean) <= max_len:
+        ident = sanitize_identifier(clean, "agentic")
+        return ident if ident and ident != "x" else "tool_result"
+    # Truncate and sanitize
+    ident = sanitize_identifier(clean[:max_len], "agentic")
+    return ident if ident and ident != "x" else "tool_result"
+
+
+def _detect_backtracking(think_text: str) -> bool:
+    """Detect self-correction patterns in think blocks."""
+    bt_patterns = [
+        r"(?:wait|actually|no,?\s+that'?s?\s+(?:not|wrong))",
+        r"(?:let\s+me\s+(?:re(?:think|consider|try)|start\s+over))",
+        r"(?:I\s+(?:was\s+wrong|made\s+(?:a|an)\s+(?:error|mistake)))",
+        r"(?:correct(?:ion|ing)|on\s+second\s+thought)",
+    ]
+    for pat in bt_patterns:
+        if re.search(pat, think_text, re.I):
+            return True
+    return False
+
+
+def convert_agentic_trace(record: dict) -> tuple[str, bool]:
+    """Convert an agentic multi-turn trace with tool calls to RLang.
+
+    Maps:
+    - First human message -> Frame phase (problem setup)
+    - Think blocks -> Explore phase (reasoning + tool invocations)
+    - Tool calls -> inv(tool_name, args) in Explore phase
+    - Tool responses -> obs(result) with ep:direct | src:tool
+    - Self-corrections in think -> bt() in Verify phase
+    - Final conclusion -> Decide phase
+
+    For very long conversations (>50 messages), summarize key reasoning
+    steps rather than converting every message.
+    """
+    metadata_str = record.get("metadata", "{}")
+    try:
+        metadata = json.loads(metadata_str) if isinstance(metadata_str, str) else metadata_str
+    except (json.JSONDecodeError, TypeError):
+        metadata = {}
+
+    conversations_raw = metadata.get("conversations_raw", "[]")
+    try:
+        conversations = json.loads(conversations_raw) if isinstance(conversations_raw, str) else conversations_raw
+    except (json.JSONDecodeError, TypeError):
+        conversations = []
+
+    if not conversations:
+        return "", False
+
+    problem = record.get("problem", "")
+    thinking = record.get("thinking_english", "")
+
+    if not thinking and not problem:
+        return "", False
+
+    msg_count = len(conversations)
+    summarize = msg_count > 50
+
+    # ---- Collect structured elements from conversations ----
+
+    frame_obs = []          # Observations for Frame phase
+    explore_items = []      # inv() and obs() calls for Explore
+    verify_items = []       # bt() and req() for Verify
+    has_backtracking = False
+    tool_call_seq = []      # For seq() chaining
+
+    # First human message -> Frame
+    for msg in conversations:
+        if msg.get("from") == "human":
+            text = msg.get("value", "")
+            ident = sanitize_identifier(text[:120], "agentic")
+            if ident and ident != "x":
+                frame_obs.append(ident)
+            break
+
+    # Add problem as frame observation
+    if problem:
+        prob_ident = sanitize_identifier(problem[:120], "agentic")
+        if prob_ident and prob_ident != "x" and prob_ident not in frame_obs:
+            frame_obs.append(prob_ident)
+
+    # Process conversation messages
+    think_pattern = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+    processed_msgs = 0
+    max_explore_items = 12 if not summarize else 6
+
+    for msg in conversations:
+        if summarize and processed_msgs > 30:
+            break
+
+        role = msg.get("from", "")
+        value = msg.get("value", "")
+
+        if role == "gpt":
+            # Extract think blocks for reasoning
+            thinks = think_pattern.findall(value)
+            for think_text in thinks:
+                if _detect_backtracking(think_text):
+                    has_backtracking = True
+                    if len(verify_items) < 3:
+                        verify_items.append("bt()")
+
+            # Extract tool calls -> inv() operators
+            tool_calls = _parse_tool_calls(value)
+            for tc in tool_calls:
+                name = tc.get("name", "")
+                args = tc.get("arguments", {})
+                if not name:
+                    continue
+                clean_name = _sanitize_tool_name(name)
+                args_summary = _summarize_args(args if isinstance(args, dict) else {})
+                inv_call = f"inv({clean_name}, {args_summary})" if args_summary else f"inv({clean_name})"
+                if len(explore_items) < max_explore_items:
+                    explore_items.append(inv_call)
+                tool_call_seq.append(clean_name)
+
+        elif role == "tool":
+            # Tool responses -> obs() with ep:direct | src:tool
+            responses = _parse_tool_responses(value)
+            for resp in responses:
+                obs_ident = _summarize_tool_response(resp)
+                obs_call = f"obs({obs_ident}) | ep:direct | src:tool"
+                if len(explore_items) < max_explore_items:
+                    explore_items.append(obs_call)
+
+        processed_msgs += 1
+
+    # Also extract reasoning from thinking_english for Explore
+    if thinking:
+        # Extract key reasoning statements from concatenated think blocks
+        sentences = SENTENCE_SPLIT.split(thinking) if 'SENTENCE_SPLIT' in dir() else thinking.split(". ")
+        meaningful = [s.strip() for s in sentences
+                      if len(s.strip()) > 20 and not is_filler_sentence(s)]
+        # Take a few key reasoning sentences
+        for s in meaningful[:3]:
+            ident = sanitize_identifier(s, "agentic")
+            if ident and ident != "x" and len(ident) >= 2:
+                if len(explore_items) < max_explore_items:
+                    explore_items.append(f"obs({ident}) | ep:infer | src:reason")
+
+    # ---- Build RLang trace ----
+    lines = []
+
+    # Use Deductive as reasoning mode (parser only accepts Deductive/Abductive/Analogical)
+    reasoning_mode = "Deductive"
+
+    # --- Frame phase ---
+    lines.append("#[phase(Frame)]")
+    lines.append(f"impl {reasoning_mode} {{")
+    if not frame_obs:
+        frame_obs = ["task"]
+    # Deduplicate and sanitize frame observations
+    seen_frame = set()
+    for obs_name in frame_obs[:3]:
+        clean = re.sub(r"[^a-zA-Z0-9_]", "_", obs_name).strip("_")[:25]
+        if not clean or clean in seen_frame:
+            continue
+        seen_frame.add(clean)
+        lines.append(
+            f"    let {clean}: blf<0.90> = obs({clean})"
+            f" | p:0.90 | ep:direct | scope:loc | t:fresh;"
+        )
+    if not seen_frame:
+        lines.append(
+            "    let task: blf<0.90> = obs(task)"
+            " | p:0.90 | ep:direct | scope:loc | t:fresh;"
+        )
+        seen_frame.add("task")
+    lines.append("}")
+
+    # --- Explore phase ---
+    lines.append("")
+    lines.append("#[phase(Explore)]")
+    lines.append("{")
+
+    if not explore_items:
+        explore_items = ["obs(task) | ep:direct | src:tool"]
+
+    # Build evidence items with unique source names
+    belief = "conclusion"
+    ev_lines = []
+    seen_sources = set()
+
+    for i, item in enumerate(explore_items[:8]):
+        # Extract a source name from the item
+        if "(" in item:
+            inner = item.split("(")[1].split(",")[0].split(")")[0]
+            source = re.sub(r"[^a-zA-Z0-9_]", "_", inner).strip("_")[:20]
+        else:
+            source = ""
+
+        if not source or len(source) < 2:
+            source = f"step_{i}"
+
+        # Ensure uniqueness
+        base_source = source
+        counter = 0
+        while source in seen_sources:
+            counter += 1
+            source = f"{base_source}_{counter}"
+        seen_sources.add(source)
+
+        if "inv(" in item:
+            ev_lines.append(f"        {source} => sup({belief}, +0.10)")
+        else:
+            ev_lines.append(f"        {source} => sup({belief}, +0.08)")
+
+    if ev_lines:
+        lines.append("    let ev = [")
+        lines.append(",\n".join(ev_lines) + ",")
+        lines.append("    ];")
+    else:
+        lines.append("    let ev = [];")
+    lines.append(f"    {belief} |> resolve(ev) -> Ok(rslv);")
+    lines.append("}")
+
+    # --- Verify phase ---
+    lines.append("")
+    lines.append("#[phase(Verify)]")
+    lines.append("{")
+    first_obs = list(seen_frame)[0] if seen_frame else "task"
+    lines.append(f"    req({belief}, obs({first_obs})) |> verify({belief}) -> Ok(());")
+    lines.append("}")
+
+    # --- Decide phase ---
+    lines.append("")
+    lines.append("#[phase(Decide)]")
+    lines.append("{")
+    lines.append(f"    match conf({belief}) {{")
+    lines.append(f"        c if c > 0.85 => assert({belief}),")
+    lines.append(f"        c if c > 0.55 => hedge({belief}),")
+    lines.append(f"        _ => reject({belief}),")
+    lines.append("    }")
+    lines.append("}")
+
+    rlang_text = "\n".join(lines)
+
+    # Check compression ratio
+    english_text = thinking if thinking else problem
+    english_len = len(english_text)
+    rlang_len = len(re.sub(r'//[^\n]*', '', rlang_text).strip())
+
+    if rlang_len > 0 and english_len > 0:
+        ratio = english_len / rlang_len
+        if ratio < 1.0:
+            return "", False
+
+    return rlang_text, True
+
+
+# ---------------------------------------------------------------------------
 # Batch processing
 # ---------------------------------------------------------------------------
 
 def process_record(record: dict, do_validate: bool = True) -> Optional[dict]:
     """Process a single record from the standardized dataset."""
-    english = record.get("thinking_english", "")
-    if not english:
-        return None
+    record_id = record.get("id", "unknown")
+    is_hermes = str(record_id).startswith("hermes_")
 
-    rlang_text, success = convert_trace(english)
-    if not success:
-        return None
+    english = record.get("thinking_english", "")
+
+    # Hermes traces may have sparse thinking but rich tool-call structure
+    if is_hermes:
+        rlang_text, success = convert_agentic_trace(record)
+        if not success:
+            # Fall back to standard conversion if agentic conversion fails
+            if english:
+                rlang_text, success = convert_trace(english)
+            if not success:
+                return None
+    else:
+        if not english:
+            return None
+        rlang_text, success = convert_trace(english)
+        if not success:
+            return None
 
     english_tokens = estimate_tokens(english)
     rlang_tokens = estimate_tokens(rlang_text)
