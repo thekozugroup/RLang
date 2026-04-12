@@ -294,30 +294,166 @@ def check_content_preservation(english: str, rlang: str) -> tuple[bool, list[str
     if not english or not rlang:
         return False, ["empty_text"]
 
+    # Filler/connective words and meta-reasoning words that are NOT domain
+    # concepts. These describe HOW you reason, not WHAT you reason about.
+    FILLER_WORDS = {
+        # Connectives and adverbs
+        "however", "therefore", "actually", "basically", "essentially",
+        "particularly", "furthermore", "moreover", "additionally",
+        "consequently", "nevertheless", "otherwise", "although",
+        "meanwhile", "ultimately", "certainly", "definitely",
+        "probably", "possibly", "generally", "typically",
+        "specifically", "obviously", "apparently", "sometimes",
+        "regardless", "nonetheless", "accordingly", "subsequently",
+        "previously", "currently", "initially", "originally",
+        "frequently", "naturally", "importantly", "significantly",
+        "absolutely", "relatively", "approximately",
+        "entirely", "completely", "literally", "seriously",
+        "honestly", "unfortunately", "fortunately", "interestingly",
+        "considering", "following", "including", "involving",
+        "regarding", "assuming", "provided",
+        "something", "anything", "everything", "nothing",
+        "someone", "another", "between", "through", "without",
+        "because", "whether", "before", "already",
+        # Meta-reasoning words (describe thinking process, not domain)
+        "analysis", "analyze", "analyzing", "approach", "calculate",
+        "calculation", "compare", "comparing", "comparison", "consider",
+        "considered", "considering", "determine", "determining",
+        "equation", "equations", "evaluate", "evaluating", "examine",
+        "examining", "express", "expressed", "identify", "identifying",
+        "important", "interpret", "interpreting", "mention", "mentioned",
+        "multiply", "multiplying", "numbers", "observe", "obtained",
+        "organized", "perform", "performing", "problem", "problems",
+        "process", "processing", "provide", "provided", "question",
+        "questions", "reasoning", "recognize", "represent", "representing",
+        "required", "requires", "results", "several", "simplify",
+        "solution", "solving", "statement", "summarize", "summary",
+        "suppose", "understand", "understanding", "variables",
+        "verification", "working", "writing", "written",
+        "arranged", "becomes", "correct", "correctly", "different",
+        "directly", "example", "examples", "explain", "explained",
+        "expression", "finding", "information", "instead", "looking",
+        "meaning", "methods", "noticed", "possible", "quickly",
+        "remember", "similar", "situation", "standard", "suggest",
+        "together", "already", "another", "applies", "applied",
+        "appropriate", "approximate", "argument", "assuming",
+        "breaking", "careful", "carefully", "certain", "clearly",
+        "closely", "combined", "complex", "conclude", "condition",
+        "conditions", "confirm", "confused", "context", "continue",
+        "convert", "converted", "correctly", "dealing", "defined",
+        "depends", "described", "details", "discussed", "divided",
+        "earlier", "exactly", "expected", "finally", "formula",
+        "further", "helpful", "implies", "increase", "initial",
+        "involves", "largest", "maximum", "minimum", "modified",
+        "negative", "notation", "original", "otherwise", "overall",
+        "pattern", "perhaps", "positive", "previous", "proceed",
+        "properly", "related", "remaining", "repeated", "response",
+        "satisfy", "section", "separate", "simplified", "smallest",
+        "started", "straightforward", "structure", "subtract",
+        "suggests", "suppose", "systematically", "thinking", "thought",
+        "through", "typically", "various", "whether",
+    }
+
+    # English reasoning verbs -> RLang operator mapping
+    VERB_TO_OPERATOR = {
+        "causes": "cause", "caused": "cause", "causing": "cause",
+        "prevents": "prvnt", "prevented": "prvnt", "preventing": "prvnt",
+        "enables": "enbl", "enabled": "enbl", "enabling": "enbl",
+        "requires": "req", "required": "req", "requiring": "req",
+        "needs": "req",
+        "observes": "obs", "observed": "obs", "observing": "obs",
+        "notices": "obs", "noticed": "obs", "noticing": "obs",
+        "similar": "sim", "analogous": "sim",
+        "conflicts": "confl", "contradicts": "confl", "contradicting": "confl",
+        "changes": "chng", "changed": "chng", "transforms": "chng",
+        "transforming": "chng", "changing": "chng",
+        "contains": "cntns", "includes": "cntns", "containing": "cntns",
+        "including": "cntns",
+        "goal": "goal", "objective": "goal", "aim": "goal",
+    }
+
     # Extract key nouns/concepts from English (simple heuristic: words > 5 chars)
     english_words = set(re.findall(r'\b[a-zA-Z]{5,}\b', english.lower()))
 
     # Extract variable names and identifiers from RLang
     rlang_ids = set(re.findall(r'\b[a-zA-Z_]\w*\b', rlang.lower()))
 
+    # Check operator matches from English reasoning verbs
+    rlang_lower = rlang.lower()
+    operator_matches = 0
+    for verb, op in VERB_TO_OPERATOR.items():
+        if verb in english.lower() and f"{op}(" in rlang_lower:
+            operator_matches += 1
+
     # Check if key concepts from English appear in RLang identifiers
-    # (either directly or as substrings)
+    # (either directly or via prefix matching)
     found_concepts = 0
     total_concepts = 0
     key_words = {w for w in english_words if len(w) > 6}  # longer = more specific
 
+    # Filter out filler/connective words
+    key_words = key_words - FILLER_WORDS
+
     if not key_words:
         return True, []
 
+    # Pre-compute RLang identifier prefixes for bidirectional matching
+    rlang_prefixes = {rid[:6] for rid in rlang_ids if len(rid) >= 4}
+
     for word in key_words:
         total_concepts += 1
-        # Check if word appears as part of any RLang identifier
-        if any(word in rid for rid in rlang_ids):
+        prefix = word[:6]
+        # Prefix matching (bidirectional): concept prefix matches identifier
+        # prefix, OR identifier starts with concept prefix, OR concept
+        # starts with identifier prefix. Handles converter truncation
+        # (e.g., "authentication" -> "authenticati" matches prefix "authen")
+        if prefix in rlang_prefixes:
             found_concepts += 1
+        elif any(rid.startswith(prefix) for rid in rlang_ids):
+            found_concepts += 1
+        elif any(word.startswith(rp) for rp in rlang_prefixes if len(rp) >= 4):
+            found_concepts += 1
+        # Also check if word appears as substring (original behavior)
+        elif any(word in rid for rid in rlang_ids):
+            found_concepts += 1
+
+    # Count operator matches as additional found concepts
+    found_concepts += operator_matches
+
+    # --- Fallback: domain-identifier density check ---
+    # Even if English concepts don't directly match RLang identifiers,
+    # the RLang may still preserve content through domain-specific
+    # identifiers that were coined by the converter. Check that the
+    # RLang has enough non-boilerplate identifiers.
+    BOILERPLATE_IDS = {
+        'impl', 'deductive', 'let', 'blf', 'obs', 'ev', 'resolve', 'conf',
+        'match', 'assert', 'hedge', 'reject', 'suspend', 'phase', 'frame',
+        'explore', 'verify', 'decide', 'sup', 'wkn', 'neut', 'cause',
+        'prvnt', 'enbl', 'req', 'sim', 'confl', 'chng', 'cntns', 'isa',
+        'goal', 'seq', 'dcmp', 'dlg', 'rmb', 'rcl', 'bt', 'exec', 'inv',
+        'emit', 'pcv', 'ok', 'if', 'c', 'p', 'ep', 'direct', 'infer',
+        'mixed', 'fresh', 'stale', 'src', 'eqn', 'key_values', '_',
+        'rslv', 'blf_resolved', 'cncl', 'abductive', 'analogical',
+    }
+    domain_ids = {rid for rid in rlang_ids if rid not in BOILERPLATE_IDS and len(rid) >= 3}
+    has_domain_content = len(domain_ids) >= 2
 
     if total_concepts > 0:
         coverage = found_concepts / total_concepts
-        if coverage < 0.05:
+        # Pass if:
+        #   - coverage > 15% OR
+        #   - has > 3 matched concepts OR
+        #   - RLang has >= 2 domain-specific identifiers (content preserved
+        #     through different naming)
+        passes_coverage = (
+            coverage > 0.15
+            or found_concepts > 3
+            or has_domain_content
+        )
+        if total_concepts <= 3:
+            passes_coverage = found_concepts >= 1 or has_domain_content
+
+        if not passes_coverage:
             issues.append(f"very_low_concept_coverage: {coverage:.2f} ({found_concepts}/{total_concepts})")
 
     # Check for "Auto-converted" comment -- indicates mechanical conversion

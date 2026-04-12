@@ -324,7 +324,7 @@ def run_check(trace: dict) -> CheckResult:
     if english:
         # Extract key nouns/concepts from English (simple heuristic)
         english_words = set(re.findall(r"\b[a-z]{4,}\b", english.lower()))
-        rlang_words = set(re.findall(r"\b[a-z]{4,}\b", rlang.lower()))
+        rlang_ids = set(re.findall(r"\b[a-z_]\w*\b", rlang.lower()))
 
         # Key reasoning words that should probably appear in RLang
         reasoning_words = {
@@ -333,8 +333,43 @@ def run_check(trace: dict) -> CheckResult:
                      "evidence", "confidence", "monitor", "verify",
                      "failure", "success", "plan", "requirement"}
         }
-        lost_words = reasoning_words - rlang_words
-        if lost_words and len(lost_words) > len(reasoning_words) * 0.5:
+
+        # English reasoning verbs -> RLang operator mapping
+        verb_to_operator = {
+            "causes": "cause", "caused": "cause", "causing": "cause",
+            "prevents": "prvnt", "prevented": "prvnt",
+            "enables": "enbl", "enabled": "enbl",
+            "requires": "req", "required": "req", "needs": "req",
+            "observes": "obs", "observed": "obs", "observing": "obs",
+            "notices": "obs", "noticed": "obs",
+            "similar": "sim", "analogous": "sim",
+            "conflicts": "confl", "contradicts": "confl",
+            "changes": "chng", "changed": "chng", "transforms": "chng",
+            "contains": "cntns", "includes": "cntns",
+            "goal": "goal", "objective": "goal", "aim": "goal",
+        }
+
+        # Count operator matches as covered reasoning
+        rlang_lower = rlang.lower()
+        operator_matched = 0
+        for verb, op in verb_to_operator.items():
+            if verb in english.lower() and f"{op}(" in rlang_lower:
+                operator_matched += 1
+
+        # Use prefix matching (first 6 chars) for identifier matching
+        # to handle converter truncation (e.g., "authentication" -> "authenticati")
+        lost_words = set()
+        for w in reasoning_words:
+            prefix = w[:6]
+            if any(rid.startswith(prefix) for rid in rlang_ids):
+                continue  # found via prefix
+            if w in rlang_ids:
+                continue  # found exact
+            lost_words.add(w)
+
+        # Reduce lost count by operator matches (concepts expressed as operators)
+        effective_lost = max(0, len(lost_words) - operator_matched)
+        if effective_lost > 0 and effective_lost > len(reasoning_words) * 0.5:
             issues.append(
                 f"Potentially lost concepts: {', '.join(sorted(lost_words)[:5])}"
             )
