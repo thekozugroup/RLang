@@ -68,6 +68,7 @@ impl<'a> Diagnostic<'a> {
             ValidationError::Bounds { message } => ("V0003", "bounds", message.as_str()),
             ValidationError::Resource { message } => ("V0004", "resource", message.as_str()),
             ValidationError::Type { message } => ("V0005", "type", message.as_str()),
+            ValidationError::Semantic { message } => ("V0006", "semantic", message.as_str()),
         };
 
         format!(
@@ -126,6 +127,7 @@ impl<'a> Diagnostic<'a> {
             ValidationError::Bounds { message } => ("V0003", "bounds", message.as_str()),
             ValidationError::Resource { message } => ("V0004", "resource", message.as_str()),
             ValidationError::Type { message } => ("V0005", "type", message.as_str()),
+            ValidationError::Semantic { message } => ("V0006", "semantic", message.as_str()),
         };
 
         format!(
