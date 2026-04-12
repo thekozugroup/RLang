@@ -1,4 +1,15 @@
 /target
 dataset/data/
+dataset/output/
 *.pyc
+__pycache__/
 .DS_Store
+.env
+.env.*
+venv/
+.venv/
+.idea/
+.vscode/
+*.log
+*.swp
+*.swo
