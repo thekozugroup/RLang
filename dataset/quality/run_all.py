@@ -46,6 +46,23 @@ from dataset.quality import consistency_check
 from dataset.quality.consistency_check import CorpusStats
 
 
+def _normalize_trace(trace: dict) -> dict:
+    """Normalize JSONL field names to what quality check modules expect.
+
+    The JSONL schema uses 'thinking_rlang' and 'thinking_english', but
+    quality check modules expect 'rlang' and 'english'. This function
+    creates a copy with both sets of keys so modules work correctly.
+    """
+    normalized = dict(trace)
+    # Map thinking_rlang -> rlang (if rlang not already present)
+    if "rlang" not in normalized and "thinking_rlang" in normalized:
+        normalized["rlang"] = normalized["thinking_rlang"]
+    # Map thinking_english -> english (if english not already present)
+    if "english" not in normalized and "thinking_english" in normalized:
+        normalized["english"] = normalized["thinking_english"]
+    return normalized
+
+
 def run_all_checks(
     trace: dict,
     corpus_stats: CorpusStats | None = None,
@@ -53,12 +70,13 @@ def run_all_checks(
     """Run all 6 quality checks on a single trace.
 
     Args:
-        trace: Dictionary with at least 'rlang' key.
+        trace: Dictionary with at least 'thinking_rlang' (or 'rlang') key.
         corpus_stats: Pre-computed corpus statistics for consistency check.
 
     Returns:
         QualityResult with composite score and all individual check results.
     """
+    trace = _normalize_trace(trace)
     trace_id = trace.get("id", trace.get("trace_id", "unknown"))
 
     # Run each check
@@ -278,7 +296,7 @@ def main() -> None:
     print("Phase 1: Building corpus statistics...")
     corpus_stats = CorpusStats()
     for trace in traces:
-        corpus_stats.update(trace)
+        corpus_stats.update(_normalize_trace(trace))
     print(f"  Corpus stats built from {corpus_stats.trace_count} traces")
     if corpus_stats.compression_ratios:
         print(f"  Mean compression: {corpus_stats.mean_compression:.1f}x")
