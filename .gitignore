@@ -1,2 +1,4 @@
 /target
 dataset/data/
+*.pyc
+.DS_Store
