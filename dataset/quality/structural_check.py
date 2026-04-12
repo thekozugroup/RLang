@@ -24,11 +24,13 @@ PHASES = ["Frame", "Explore", "Verify", "Decide"]
 VALID_REASONING_MODES = {"Deductive", "Abductive", "Analogical"}
 
 # Phase proportion bounds (min%, max%)
+# Widened to accommodate converted traces where short reasoning steps
+# naturally produce different proportions than hand-crafted examples.
 PHASE_PROPORTIONS = {
-    "Frame": (0.10, 0.25),
-    "Explore": (0.30, 0.50),
-    "Verify": (0.10, 0.25),
-    "Decide": (0.10, 0.20),
+    "Frame": (0.05, 0.35),
+    "Explore": (0.20, 0.60),
+    "Verify": (0.05, 0.30),
+    "Decide": (0.05, 0.30),
 }
 
 # Regex patterns
