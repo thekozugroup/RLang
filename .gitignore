@@ -1,6 +1,9 @@
 /target
 dataset/data/
 dataset/output/
+dataset/expansion/data/
+dataset/expansion/output/rlang_v2_*.jsonl
+dataset/expansion/batches/batch_*_input.jsonl
 *.pyc
 __pycache__/
 .DS_Store

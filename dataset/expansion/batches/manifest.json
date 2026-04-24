@@ -1,0 +1,203 @@
+{
+  "total_rows": 1399,
+  "batch_size": 50,
+  "num_batches": 28,
+  "batches": [
+    {
+      "id": 0,
+      "input_file": "batch_000_input.jsonl",
+      "output_file": "batch_000_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 1,
+      "input_file": "batch_001_input.jsonl",
+      "output_file": "batch_001_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 2,
+      "input_file": "batch_002_input.jsonl",
+      "output_file": "batch_002_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 3,
+      "input_file": "batch_003_input.jsonl",
+      "output_file": "batch_003_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 4,
+      "input_file": "batch_004_input.jsonl",
+      "output_file": "batch_004_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 5,
+      "input_file": "batch_005_input.jsonl",
+      "output_file": "batch_005_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 6,
+      "input_file": "batch_006_input.jsonl",
+      "output_file": "batch_006_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 7,
+      "input_file": "batch_007_input.jsonl",
+      "output_file": "batch_007_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 8,
+      "input_file": "batch_008_input.jsonl",
+      "output_file": "batch_008_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 9,
+      "input_file": "batch_009_input.jsonl",
+      "output_file": "batch_009_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 10,
+      "input_file": "batch_010_input.jsonl",
+      "output_file": "batch_010_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 11,
+      "input_file": "batch_011_input.jsonl",
+      "output_file": "batch_011_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 12,
+      "input_file": "batch_012_input.jsonl",
+      "output_file": "batch_012_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 13,
+      "input_file": "batch_013_input.jsonl",
+      "output_file": "batch_013_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 14,
+      "input_file": "batch_014_input.jsonl",
+      "output_file": "batch_014_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 15,
+      "input_file": "batch_015_input.jsonl",
+      "output_file": "batch_015_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 16,
+      "input_file": "batch_016_input.jsonl",
+      "output_file": "batch_016_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 17,
+      "input_file": "batch_017_input.jsonl",
+      "output_file": "batch_017_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 18,
+      "input_file": "batch_018_input.jsonl",
+      "output_file": "batch_018_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 19,
+      "input_file": "batch_019_input.jsonl",
+      "output_file": "batch_019_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 20,
+      "input_file": "batch_020_input.jsonl",
+      "output_file": "batch_020_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 21,
+      "input_file": "batch_021_input.jsonl",
+      "output_file": "batch_021_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 22,
+      "input_file": "batch_022_input.jsonl",
+      "output_file": "batch_022_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 23,
+      "input_file": "batch_023_input.jsonl",
+      "output_file": "batch_023_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 24,
+      "input_file": "batch_024_input.jsonl",
+      "output_file": "batch_024_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 25,
+      "input_file": "batch_025_input.jsonl",
+      "output_file": "batch_025_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 26,
+      "input_file": "batch_026_input.jsonl",
+      "output_file": "batch_026_output.jsonl",
+      "status": "pending",
+      "rows": 50
+    },
+    {
+      "id": 27,
+      "input_file": "batch_027_input.jsonl",
+      "output_file": "batch_027_output.jsonl",
+      "status": "pending",
+      "rows": 49
+    }
+  ]
+}
